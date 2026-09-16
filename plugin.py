@@ -37,7 +37,7 @@ class GatewaySettings(PluginConfigBase):
         default_factory=lambda: ["172.18.0.1"],
         description="允许调用 /chat 的 Docker 网桥来源 IP。",
     )
-    request_timeout_seconds: int = Field(default=55, ge=3, le=55, description="等待 MaiBot 文本回复的最长秒数。")
+    request_timeout_seconds: int = Field(default=115, ge=3, le=115, description="等待 MaiBot 文本回复的最长秒数。")
 
 
 class PersonalWebsiteSettings(PluginConfigBase):
