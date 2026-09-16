@@ -1,7 +1,7 @@
 """MyAzure 到 MaiBot 的最小文本消息网关。
 
-该插件在 MaiBot 的插件 Runner 进程中运行。它仅提供一个内部 HTTP/JSON
-入口，将输入文本交给 Host，并把同一会话的文本回复同步返回给调用方。
+该插件在 MaiBot 的插件 Runner 进程中运行。它提供内部 HTTP/JSON 和 SSE
+入口，将输入文本交给 Host，并把同一会话的文本回复返回给调用方。
 它不读取或写入 MaiBot 数据库，也不导入 MaiBot 主程序的 ``src`` 模块。
 """
 
@@ -38,6 +38,8 @@ class GatewaySettings(PluginConfigBase):
         description="允许调用 /chat 的 Docker 网桥来源 IP。",
     )
     request_timeout_seconds: int = Field(default=115, ge=3, le=115, description="等待 MaiBot 文本回复的最长秒数。")
+    segment_max_chars: int = Field(default=24, ge=4, le=200, description="分段输出时每段的建议最大字符数。")
+    segment_delay_ms: int = Field(default=80, ge=0, le=1000, description="分段输出相邻两段之间的间隔（毫秒）。")
 
 
 class PersonalWebsiteSettings(PluginConfigBase):
@@ -125,6 +127,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         return {"success": True, "external_message_id": f"website-reply-{uuid4().hex}"}
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        stream_started = False
         try:
             if not self._is_allowed_client(writer):
                 await self._write_json(writer, 403, {"error": "仅允许服务器内部请求"})
@@ -133,7 +136,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             if method == "GET" and path == "/health":
                 await self._write_json(writer, 200, {"ok": True, "gateway": GATEWAY_NAME})
                 return
-            if method != "POST" or path != "/chat":
+            if method != "POST" or path not in {"/chat", "/chat/stream"}:
                 await self._write_json(writer, 404, {"error": "未找到接口"})
                 return
             payload = await self._read_json_body(reader, headers)
@@ -148,15 +151,35 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             if not conversation_id:
                 await self._write_json(writer, 400, {"error": "conversation_id 不能为空"})
                 return
+            if path == "/chat/stream":
+                stream_started = True
+                await self._write_sse_headers(writer)
+                await self._write_sse_event(writer, "ready", {"ok": True})
+                reply = await self._route_and_wait(conversation_id, message)
+                await self._write_segmented_reply(writer, reply)
+                await self._write_sse_event(writer, "done", {})
+                return
             reply = await self._route_and_wait(conversation_id, message)
             await self._write_json(writer, 200, {"reply": reply})
         except asyncio.TimeoutError:
-            await self._write_json(writer, 504, {"error": "等待 MaiBot 回复超时"})
+            if stream_started:
+                await self._write_sse_event(writer, "error", {"error": "等待 MaiBot 回复超时"})
+                await self._write_sse_event(writer, "done", {})
+            else:
+                await self._write_json(writer, 504, {"error": "等待 MaiBot 回复超时"})
         except ValueError as exc:
-            await self._write_json(writer, 400, {"error": str(exc)})
+            if stream_started:
+                await self._write_sse_event(writer, "error", {"error": str(exc)})
+                await self._write_sse_event(writer, "done", {})
+            else:
+                await self._write_json(writer, 400, {"error": str(exc)})
         except Exception:
             self.ctx.logger.exception("个人网站连接器处理请求失败")
-            await self._write_json(writer, 502, {"error": "MaiBot 网关处理失败"})
+            if stream_started:
+                await self._write_sse_event(writer, "error", {"error": "MaiBot 网关处理失败"})
+                await self._write_sse_event(writer, "done", {})
+            else:
+                await self._write_json(writer, 502, {"error": "MaiBot 网关处理失败"})
         finally:
             writer.close()
             try:
@@ -275,6 +298,52 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             + raw
         )
         await writer.drain()
+
+    @staticmethod
+    async def _write_sse_headers(writer: asyncio.StreamWriter) -> None:
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream; charset=utf-8\r\n"
+            b"Cache-Control: no-cache\r\n"
+            b"X-Accel-Buffering: no\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+        await writer.drain()
+
+    @staticmethod
+    async def _write_sse_event(writer: asyncio.StreamWriter, event: str, payload: Mapping[str, Any]) -> None:
+        raw = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
+        writer.write(f"event: {event}\ndata: {raw}\n\n".encode("utf-8"))
+        await writer.drain()
+
+    async def _write_segmented_reply(self, writer: asyncio.StreamWriter, reply: str) -> None:
+        chunks = self._segment_reply(reply, self._settings().gateway.segment_max_chars)
+        delay = self._settings().gateway.segment_delay_ms / 1000
+        for index, chunk in enumerate(chunks):
+            await self._write_sse_event(writer, "chunk", {"delta": chunk})
+            if delay and index + 1 < len(chunks):
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _segment_reply(reply: str, max_chars: int) -> list[str]:
+        """优先在自然句界或空白处切分，保证每个非空回复都至少有一个分段。"""
+        text = reply.strip()
+        if not text:
+            return []
+        chunks: list[str] = []
+        sentence_breaks = set("。！？；!?;\n")
+        while len(text) > max_chars:
+            window = text[:max_chars]
+            cut = max((index + 1 for index, char in enumerate(window) if char in sentence_breaks), default=0)
+            if not cut:
+                cut = max(window.rfind(" ") + 1, window.rfind("\t") + 1)
+            if not cut:
+                cut = max_chars
+            chunks.append(text[:cut])
+            text = text[cut:]
+        if text:
+            chunks.append(text)
+        return chunks
 
     @staticmethod
     def _conversation_candidates(message: Mapping[str, Any], route: Mapping[str, Any]) -> list[str]:

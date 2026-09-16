@@ -11,7 +11,7 @@
   -> 本插件 MessageGateway
   -> MaiBot Host
   -> 本插件 MessageGateway
-  -> {"reply":"..."}
+  -> /chat 返回 {"reply":"..."}，或 /chat/stream 返回 SSE 分段
 ```
 
 MyAzure 会为每个登录用户提供稳定的 `conversation_id`，插件用它隔离等待中的请求和 MaiBot 会话。前端历史不会再次传给 MaiBot，避免与 MaiBot 自身上下文重复。

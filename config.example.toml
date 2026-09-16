@@ -8,3 +8,6 @@ port = 18080
 # MyAzure systemd 服务从 Docker 网桥访问容器时的来源地址。
 allowed_client_ips = ["172.18.0.1"]
 request_timeout_seconds = 115
+# MaiBot 当前只在完整回复生成后投递消息；以下参数控制适配器的自动分段呈现。
+segment_max_chars = 24
+segment_delay_ms = 80

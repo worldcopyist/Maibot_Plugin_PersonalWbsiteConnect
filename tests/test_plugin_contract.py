@@ -98,6 +98,16 @@ class PluginContractTests(unittest.TestCase):
             "花括号内容：{text: hi}",
         )
 
+    def test_reply_is_segmented_on_sentence_boundaries_before_hard_cut(self):
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._segment_reply("第一句。第二句很长。第三句。", 8),
+            ["第一句。", "第二句很长。", "第三句。"],
+        )
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._segment_reply("abcdefghijkl", 5),
+            ["abcde", "fghij", "kl"],
+        )
+
     def test_gateway_round_trip_correlates_the_same_conversation(self):
         class Gateway:
             async def route_message(self, **kwargs: Any) -> bool:
