@@ -78,6 +78,26 @@ class PluginContractTests(unittest.TestCase):
             ["myazure", "myazure-user-7"],
         )
 
+    def test_outbound_reply_removes_only_a_leading_serialized_text_mapping(self):
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._extract_text(
+                {"processed_plain_text": "{'text': 'hi'} 在的在的"}
+            ),
+            "在的在的",
+        )
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._extract_text(
+                {"processed_plain_text": '{"text": "hi"} 在的在的'}
+            ),
+            "在的在的",
+        )
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._extract_text(
+                {"processed_plain_text": "花括号内容：{text: hi}"}
+            ),
+            "花括号内容：{text: hi}",
+        )
+
     def test_gateway_round_trip_correlates_the_same_conversation(self):
         class Gateway:
             async def route_message(self, **kwargs: Any) -> bool:

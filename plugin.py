@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import time
 from collections.abc import Mapping
@@ -308,7 +309,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         for key in ("processed_plain_text", "display_message", "text", "content"):
             value = message.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                return PersonalWebsiteGatewayPlugin._strip_serialized_text_prefix(value)
         raw_message = message.get("raw_message")
         if isinstance(raw_message, list):
             pieces: list[str] = []
@@ -319,8 +320,57 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                 if isinstance(data, Mapping) and isinstance(data.get("text"), str):
                     pieces.append(data["text"])
             if "".join(pieces).strip():
-                return "".join(pieces).strip()
+                return PersonalWebsiteGatewayPlugin._strip_serialized_text_prefix("".join(pieces))
         return ""
+
+    @staticmethod
+    def _strip_serialized_text_prefix(value: str) -> str:
+        """移除 Host 偶尔拼入回复开头的 ``{'text': '…'}`` 序列化片段。
+
+        只处理位于开头、且仅包含 ``text`` 键的 Python/JSON 映射，避免误删
+        正常聊天中出现的花括号或代码片段。
+        """
+        text = value.strip()
+        if not text.startswith("{"):
+            return text
+
+        end = PersonalWebsiteGatewayPlugin._leading_mapping_end(text)
+        if end is None:
+            return text
+        try:
+            parsed = ast.literal_eval(text[:end])
+        except (SyntaxError, ValueError):
+            return text
+        if not isinstance(parsed, dict) or set(parsed) != {"text"} or not isinstance(parsed["text"], str):
+            return text
+        return text[end:].lstrip()
+
+    @staticmethod
+    def _leading_mapping_end(value: str) -> int | None:
+        """返回开头映射的右花括号位置，正确跳过字符串中的花括号。"""
+        depth = 0
+        quote = ""
+        escaped = False
+        for index, char in enumerate(value):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char in {"'", '"'}:
+                quote = char
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+                if depth < 0:
+                    return None
+        return None
 
 
 def create_plugin() -> PersonalWebsiteGatewayPlugin:
