@@ -21,7 +21,13 @@ GATEWAY_NAME = "personal_website_gateway"
 PLATFORM = "personal_website"
 
 
-class PersonalWebsiteSettings(PluginConfigBase):
+class PluginSettings(PluginConfigBase):
+    """Runner 需要的插件级元数据。"""
+
+    config_version: str = Field(default="1.0.0", description="插件配置结构版本。")
+
+
+class GatewaySettings(PluginConfigBase):
     """仅限服务器内部网络的网关配置。"""
 
     bind_host: str = Field(default="0.0.0.0", description="容器内监听地址。")
@@ -31,6 +37,13 @@ class PersonalWebsiteSettings(PluginConfigBase):
         description="允许调用 /chat 的 Docker 网桥来源 IP。",
     )
     request_timeout_seconds: int = Field(default=18, ge=3, le=55, description="等待 MaiBot 文本回复的最长秒数。")
+
+
+class PersonalWebsiteSettings(PluginConfigBase):
+    """个人网站连接器完整配置。"""
+
+    plugin: PluginSettings = Field(default_factory=PluginSettings)
+    gateway: GatewaySettings = Field(default_factory=GatewaySettings)
 
 
 class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
@@ -46,16 +59,16 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
 
     async def on_load(self) -> None:
         settings = self._settings()
-        self._server = await asyncio.start_server(self._handle_client, settings.bind_host, settings.port)
+        self._server = await asyncio.start_server(self._handle_client, settings.gateway.bind_host, settings.gateway.port)
         await self.ctx.gateway.update_state(
             GATEWAY_NAME,
             ready=True,
             platform=PLATFORM,
             account_id="myazure",
             scope="internal",
-            metadata={"protocol": "http-json", "port": settings.port},
+            metadata={"protocol": "http-json", "port": settings.gateway.port},
         )
-        self.ctx.logger.info("个人网站连接器已监听 %s:%s", settings.bind_host, settings.port)
+        self.ctx.logger.info("个人网站连接器已监听 %s:%s", settings.gateway.bind_host, settings.gateway.port)
 
     async def on_unload(self) -> None:
         if self._server is not None:
@@ -171,7 +184,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             )
             if not accepted:
                 raise RuntimeError("MaiBot 未接受网站消息")
-            return await asyncio.wait_for(future, timeout=self._settings().request_timeout_seconds)
+            return await asyncio.wait_for(future, timeout=self._settings().gateway.request_timeout_seconds)
         finally:
             async with self._pending_lock:
                 self._pending.pop(conversation_id, None)
@@ -214,7 +227,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
     def _is_allowed_client(self, writer: asyncio.StreamWriter) -> bool:
         peer = writer.get_extra_info("peername")
         host = str(peer[0]) if isinstance(peer, tuple) and peer else ""
-        return host in set(self._settings().allowed_client_ips)
+        return host in set(self._settings().gateway.allowed_client_ips)
 
     @staticmethod
     async def _read_request_head(reader: asyncio.StreamReader) -> tuple[str, str, dict[str, str]]:

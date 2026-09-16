@@ -91,7 +91,7 @@ class PluginContractTests(unittest.TestCase):
         plugin = PLUGIN.PersonalWebsiteGatewayPlugin()
         plugin.ctx = Context()
         settings = PLUGIN.PersonalWebsiteSettings()
-        settings.request_timeout_seconds = 3
+        settings.gateway.request_timeout_seconds = 3
         plugin.config = settings
         self.assertEqual(__import__("asyncio").run(run()), "已收到")
 

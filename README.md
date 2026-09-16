@@ -35,6 +35,10 @@ git clone https://github.com/worldcopyist/Maibot_Plugin_PersonalWbsiteConnect.gi
 
 MaiBot Runner 会发现根目录的 `plugin.py` 与 `_manifest.json`。首次加载会生成运行时 `config.toml`；该文件被 `.gitignore` 忽略，不能提交。
 
+本服务器版本要求在首次加载前提供 `[plugin].config_version`。复制
+`config.example.toml` 为同目录 `config.toml`，并按实际 Docker 网桥地址调整；该
+配置不包含密码或令牌。
+
 MyAzure 服务器端需要将 Azure endpoint 配置为容器私网地址，例如：
 
 ```text
