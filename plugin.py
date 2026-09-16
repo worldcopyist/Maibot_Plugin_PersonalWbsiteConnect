@@ -151,15 +151,18 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             if not conversation_id:
                 await self._write_json(writer, 400, {"error": "conversation_id 不能为空"})
                 return
+            # 昵称由已认证的 MyAzure 服务端生成；浏览器不能直接调用此内网入口。
+            # 会话键仍使用 conversation_id，昵称仅供 MaiBot 展示与上下文识别。
+            user_nickname = self._normalize_user_nickname(payload.get("user_nickname"))
             if path == "/chat/stream":
                 stream_started = True
                 await self._write_sse_headers(writer)
                 await self._write_sse_event(writer, "ready", {"ok": True})
-                reply = await self._route_and_wait(conversation_id, message)
+                reply = await self._route_and_wait(conversation_id, message, user_nickname)
                 await self._write_segmented_reply(writer, reply)
                 await self._write_sse_event(writer, "done", {})
                 return
-            reply = await self._route_and_wait(conversation_id, message)
+            reply = await self._route_and_wait(conversation_id, message, user_nickname)
             await self._write_json(writer, 200, {"reply": reply})
         except asyncio.TimeoutError:
             if stream_started:
@@ -187,7 +190,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             except ConnectionError:
                 pass
 
-    async def _route_and_wait(self, conversation_id: str, text: str) -> str:
+    async def _route_and_wait(self, conversation_id: str, text: str, user_nickname: str = "网站用户") -> str:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         async with self._pending_lock:
@@ -198,7 +201,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         try:
             accepted = await self.ctx.gateway.route_message(
                 gateway_name=GATEWAY_NAME,
-                message=self._build_inbound_message(message_id, conversation_id, text),
+                message=self._build_inbound_message(message_id, conversation_id, text, user_nickname),
                 route_metadata={
                     "platform": PLATFORM,
                     "account_id": "myazure",
@@ -216,7 +219,13 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                 self._pending.pop(conversation_id, None)
 
     @staticmethod
-    def _build_inbound_message(message_id: str, conversation_id: str, text: str) -> dict[str, Any]:
+    def _build_inbound_message(
+        message_id: str,
+        conversation_id: str,
+        text: str,
+        user_nickname: str = "网站用户",
+    ) -> dict[str, Any]:
+        user_nickname = PersonalWebsiteGatewayPlugin._normalize_user_nickname(user_nickname)
         return {
             "message_id": message_id,
             "timestamp": str(time.time()),
@@ -224,12 +233,13 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             "message_info": {
                 "user_info": {
                     "user_id": conversation_id,
-                    "user_nickname": "MyAzure 用户",
-                    "user_cardname": None,
+                    "user_nickname": user_nickname,
+                    "user_cardname": user_nickname,
                 },
                 "additional_config": {
                     "platform_io_target_user_id": conversation_id,
                     "website_conversation_id": conversation_id,
+                    "website_username": user_nickname,
                 },
             },
             "raw_message": [{"type": "text", "data": {"text": text}}],
@@ -243,6 +253,12 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             "processed_plain_text": text,
             "display_message": text,
         }
+
+    @staticmethod
+    def _normalize_user_nickname(value: Any) -> str:
+        """Prevent control characters from leaking into the Host message envelope."""
+        nickname = " ".join(str(value or "").split())
+        return nickname[:64] or "网站用户"
 
     def _settings(self) -> PersonalWebsiteSettings:
         config = self.config

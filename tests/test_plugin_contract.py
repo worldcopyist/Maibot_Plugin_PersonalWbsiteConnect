@@ -54,11 +54,20 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(manifest["sdk"]["min_version"], "2.8.0")
 
     def test_inbound_message_has_gateway_contract(self):
-        message = PLUGIN.PersonalWebsiteGatewayPlugin._build_inbound_message("m-1", "myazure-user-7", "你好")
+        message = PLUGIN.PersonalWebsiteGatewayPlugin._build_inbound_message(
+            "m-1", "myazure-user-7", "你好", "alice"
+        )
         self.assertEqual(message["platform"], "personal_website")
         self.assertEqual(message["processed_plain_text"], "你好")
         self.assertEqual(message["message_info"]["user_info"]["user_id"], "myazure-user-7")
+        self.assertEqual(message["message_info"]["user_info"]["user_nickname"], "alice")
+        self.assertEqual(message["message_info"]["user_info"]["user_cardname"], "alice")
         self.assertEqual(message["message_info"]["additional_config"]["platform_io_target_user_id"], "myazure-user-7")
+        self.assertEqual(message["message_info"]["additional_config"]["website_username"], "alice")
+
+    def test_inbound_message_normalizes_missing_or_control_nickname(self):
+        self.assertEqual(PLUGIN.PersonalWebsiteGatewayPlugin._normalize_user_nickname("\n 世界猫（worldcat）\t"), "世界猫（worldcat）")
+        self.assertEqual(PLUGIN.PersonalWebsiteGatewayPlugin._normalize_user_nickname(""), "网站用户")
 
     def test_outbound_reply_and_conversation_are_extracted(self):
         message = {
