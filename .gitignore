@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.py[cod]
+config.toml
+.pytest_cache/
+

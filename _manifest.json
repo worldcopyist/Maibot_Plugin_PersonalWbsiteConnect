@@ -1,0 +1,33 @@
+{
+  "manifest_version": 2,
+  "id": "worldcopyist.personal-website-connect",
+  "version": "0.1.0",
+  "name": "个人网站连接器",
+  "description": "将 MyAzure 网站的文本聊天请求接入 MaiBot，仅在服务器内部网络中使用。",
+  "author": {
+    "name": "worldcopyist",
+    "url": "https://github.com/worldcopyist"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/worldcopyist/Maibot_Plugin_PersonalWbsiteConnect",
+    "homepage": "https://github.com/worldcopyist/Maibot_Plugin_PersonalWbsiteConnect",
+    "documentation": "https://github.com/worldcopyist/Maibot_Plugin_PersonalWbsiteConnect#readme",
+    "issues": "https://github.com/worldcopyist/Maibot_Plugin_PersonalWbsiteConnect/issues"
+  },
+  "host_application": {
+    "min_version": "1.2.0",
+    "max_version": "1.2.99"
+  },
+  "sdk": {
+    "min_version": "2.8.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": ["zh-CN"]
+  },
+  "plugin_type": "adapter"
+}
