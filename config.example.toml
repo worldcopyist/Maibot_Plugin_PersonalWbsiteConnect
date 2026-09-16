@@ -7,4 +7,4 @@ bind_host = "0.0.0.0"
 port = 18080
 # MyAzure systemd 服务从 Docker 网桥访问容器时的来源地址。
 allowed_client_ips = ["172.18.0.1"]
-request_timeout_seconds = 18
+request_timeout_seconds = 45
