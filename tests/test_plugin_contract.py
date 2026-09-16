@@ -70,6 +70,13 @@ class PluginContractTests(unittest.TestCase):
             PLUGIN.PersonalWebsiteGatewayPlugin._conversation_from_outbound(message, {}),
             "myazure-user-7",
         )
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._conversation_candidates(
+                message,
+                {"target_user_id": "myazure", "conversation_id": "myazure-user-7"},
+            ),
+            ["myazure", "myazure-user-7"],
+        )
 
     def test_gateway_round_trip_correlates_the_same_conversation(self):
         class Gateway:
@@ -79,6 +86,32 @@ class PluginContractTests(unittest.TestCase):
                 await plugin.deliver_to_website(
                     {"processed_plain_text": "已收到"},
                     {"target_user_id": conversation_id},
+                )
+                return True
+
+        class Context:
+            gateway = Gateway()
+
+        async def run() -> str:
+            return await plugin._route_and_wait("myazure-user-7", "你好")
+
+        plugin = PLUGIN.PersonalWebsiteGatewayPlugin()
+        plugin.ctx = Context()
+        settings = PLUGIN.PersonalWebsiteSettings()
+        settings.gateway.request_timeout_seconds = 3
+        plugin.config = settings
+        self.assertEqual(__import__("asyncio").run(run()), "已收到")
+
+    def test_gateway_prefers_a_pending_conversation_over_route_account_target(self):
+        class Gateway:
+            async def route_message(self, **kwargs: Any) -> bool:
+                conversation_id = kwargs["message"]["message_info"]["user_info"]["user_id"]
+                await plugin.deliver_to_website(
+                    {
+                        "processed_plain_text": "已收到",
+                        "message_info": {"additional_config": {"website_conversation_id": conversation_id}},
+                    },
+                    {"target_user_id": "myazure"},
                 )
                 return True
 

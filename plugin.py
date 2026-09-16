@@ -36,7 +36,7 @@ class GatewaySettings(PluginConfigBase):
         default_factory=lambda: ["172.18.0.1"],
         description="允许调用 /chat 的 Docker 网桥来源 IP。",
     )
-    request_timeout_seconds: int = Field(default=45, ge=3, le=55, description="等待 MaiBot 文本回复的最长秒数。")
+    request_timeout_seconds: int = Field(default=55, ge=3, le=55, description="等待 MaiBot 文本回复的最长秒数。")
 
 
 class PersonalWebsiteSettings(PluginConfigBase):
@@ -108,13 +108,15 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         """接收 Host 出站文本，并唤醒相同网站会话的 HTTP 请求。"""
         del metadata
         del kwargs
-        conversation_id = self._conversation_from_outbound(message, route or {})
-        if not conversation_id:
-            return {"success": False, "error": "出站消息缺少网站会话标识"}
         reply = self._extract_text(message)
         if not reply:
             return {"success": False, "error": "出站消息不包含文本"}
+        candidates = self._conversation_candidates(message, route or {})
+        if not candidates:
+            return {"success": False, "error": "出站消息缺少网站会话标识"}
         async with self._pending_lock:
+            # Host 路由可能含 account_id 等上游目标值；优先匹配当前真实等待中的网站会话。
+            conversation_id = next((value for value in candidates if value in self._pending), "")
             future = self._pending.get(conversation_id)
             if future is None or future.done():
                 return {"success": False, "error": "没有等待该网站会话的请求"}
@@ -274,7 +276,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         await writer.drain()
 
     @staticmethod
-    def _conversation_from_outbound(message: Mapping[str, Any], route: Mapping[str, Any]) -> str:
+    def _conversation_candidates(message: Mapping[str, Any], route: Mapping[str, Any]) -> list[str]:
         candidates: list[Any] = [
             route.get("target_user_id"),
             route.get("user_id"),
@@ -289,11 +291,17 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                 candidates.extend(
                     [additional.get("platform_io_target_user_id"), additional.get("website_conversation_id")]
                 )
+        values: list[str] = []
         for candidate in candidates:
             value = str(candidate or "").strip()
-            if value:
-                return value
-        return ""
+            if value and value not in values:
+                values.append(value)
+        return values
+
+    @classmethod
+    def _conversation_from_outbound(cls, message: Mapping[str, Any], route: Mapping[str, Any]) -> str:
+        candidates = cls._conversation_candidates(message, route)
+        return candidates[0] if candidates else ""
 
     @staticmethod
     def _extract_text(message: Mapping[str, Any]) -> str:
