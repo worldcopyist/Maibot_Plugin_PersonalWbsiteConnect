@@ -62,8 +62,10 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(message["message_info"]["user_info"]["user_id"], "myazure-user-7")
         self.assertEqual(message["message_info"]["user_info"]["user_nickname"], "alice")
         self.assertEqual(message["message_info"]["user_info"]["user_cardname"], "alice")
+        self.assertNotIn("group_info", message["message_info"])
         self.assertEqual(message["message_info"]["additional_config"]["platform_io_target_user_id"], "myazure-user-7")
         self.assertEqual(message["message_info"]["additional_config"]["website_username"], "alice")
+        self.assertEqual(message["message_info"]["additional_config"]["website_message_type"], "private")
 
     def test_inbound_message_normalizes_missing_or_control_nickname(self):
         self.assertEqual(PLUGIN.PersonalWebsiteGatewayPlugin._normalize_user_nickname("\n 世界猫（worldcat）\t"), "世界猫（worldcat）")
@@ -85,6 +87,13 @@ class PluginContractTests(unittest.TestCase):
                 {"target_user_id": "myazure", "conversation_id": "myazure-user-7"},
             ),
             ["myazure", "myazure-user-7"],
+        )
+        self.assertEqual(
+            PLUGIN.PersonalWebsiteGatewayPlugin._conversation_candidates(
+                {"reply_to": "website-inbound-1"},
+                {},
+            ),
+            ["website-inbound-1"],
         )
 
     def test_outbound_reply_removes_only_a_leading_serialized_text_mapping(self):
@@ -166,6 +175,38 @@ class PluginContractTests(unittest.TestCase):
         settings.gateway.request_timeout_seconds = 3
         plugin.config = settings
         self.assertEqual(__import__("asyncio").run(run()), "已收到")
+
+    def test_gateway_private_reply_uses_reply_to_when_target_user_id_is_not_preserved(self):
+        class Gateway:
+            async def route_message(self, **kwargs: Any) -> bool:
+                inbound = kwargs["message"]
+                await plugin.deliver_to_website(
+                    {
+                        "processed_plain_text": "已通过私聊回调关联",
+                        "reply_to": inbound["message_id"],
+                        "message_info": {"additional_config": {"platform_io_account_id": "myazure"}},
+                    },
+                    {"platform": "personal_website", "account_id": "myazure", "scope": "internal"},
+                )
+                return True
+
+        class Context:
+            gateway = Gateway()
+
+            class logger:
+                @staticmethod
+                def warning(*args: Any, **kwargs: Any) -> None:
+                    del args, kwargs
+
+        async def run() -> str:
+            return await plugin._route_and_wait("myazure-user-7", "你好", "alice")
+
+        plugin = PLUGIN.PersonalWebsiteGatewayPlugin()
+        plugin.ctx = Context()
+        settings = PLUGIN.PersonalWebsiteSettings()
+        settings.gateway.request_timeout_seconds = 3
+        plugin.config = settings
+        self.assertEqual(__import__("asyncio").run(run()), "已通过私聊回调关联")
 
 
 if __name__ == "__main__":

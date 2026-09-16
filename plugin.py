@@ -58,6 +58,9 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         super().__init__()
         self._server: asyncio.AbstractServer | None = None
         self._pending: dict[str, asyncio.Future[str]] = {}
+        # MaiBot 的私聊出站消息会带 reply_to（原入站 message_id）。
+        # 它比 Platform IO 的通用 route 更适合作为 HTTP 请求的精确回调键。
+        self._pending_message_ids: dict[str, str] = {}
         self._pending_lock = asyncio.Lock()
 
     async def on_load(self) -> None:
@@ -83,6 +86,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                 if not future.done():
                     future.set_exception(RuntimeError("个人网站连接器已停止"))
             self._pending.clear()
+            self._pending_message_ids.clear()
         await self.ctx.gateway.update_state(GATEWAY_NAME, ready=False, platform=PLATFORM, scope="internal")
 
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
@@ -118,10 +122,15 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         if not candidates:
             return {"success": False, "error": "出站消息缺少网站会话标识"}
         async with self._pending_lock:
-            # Host 路由可能含 account_id 等上游目标值；优先匹配当前真实等待中的网站会话。
-            conversation_id = next((value for value in candidates if value in self._pending), "")
+            conversation_id = self._pending_conversation_for_candidates(candidates)
             future = self._pending.get(conversation_id)
             if future is None or future.done():
+                self.ctx.logger.warning(
+                    "个人网站私聊回调未匹配等待请求：候选数=%d，含 reply_to=%s，等待数=%d",
+                    len(candidates),
+                    bool(str(message.get("reply_to") or "").strip()),
+                    len(self._pending),
+                )
                 return {"success": False, "error": "没有等待该网站会话的请求"}
             future.set_result(reply)
         return {"success": True, "external_message_id": f"website-reply-{uuid4().hex}"}
@@ -198,6 +207,8 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                 raise ValueError("该会话已有进行中的请求")
             self._pending[conversation_id] = future
         message_id = f"website-{uuid4().hex}"
+        async with self._pending_lock:
+            self._pending_message_ids[message_id] = conversation_id
         try:
             accepted = await self.ctx.gateway.route_message(
                 gateway_name=GATEWAY_NAME,
@@ -217,6 +228,7 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
         finally:
             async with self._pending_lock:
                 self._pending.pop(conversation_id, None)
+                self._pending_message_ids.pop(message_id, None)
 
     @staticmethod
     def _build_inbound_message(
@@ -237,9 +249,12 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
                     "user_cardname": user_nickname,
                 },
                 "additional_config": {
+                    # 没有 group_info 即是 MaiBot 的私聊语义；此字段提供私聊的
+                    # 出站接收者，同时让 SendService 在回复时保留目标用户 ID。
                     "platform_io_target_user_id": conversation_id,
                     "website_conversation_id": conversation_id,
                     "website_username": user_nickname,
+                    "website_message_type": "private",
                 },
             },
             "raw_message": [{"type": "text", "data": {"text": text}}],
@@ -364,6 +379,8 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
     @staticmethod
     def _conversation_candidates(message: Mapping[str, Any], route: Mapping[str, Any]) -> list[str]:
         candidates: list[Any] = [
+            # Host 为私聊 reply 设置的原入站消息 ID，是最精确的回调关联键。
+            message.get("reply_to"),
             route.get("target_user_id"),
             route.get("user_id"),
             route.get("conversation_id"),
@@ -383,6 +400,16 @@ class PersonalWebsiteGatewayPlugin(MaiBotPlugin):
             if value and value not in values:
                 values.append(value)
         return values
+
+    def _pending_conversation_for_candidates(self, candidates: list[str]) -> str:
+        """Resolve either a direct user target or an outbound reply_to reference."""
+        for value in candidates:
+            if value in self._pending:
+                return value
+            if conversation_id := self._pending_message_ids.get(value):
+                if conversation_id in self._pending:
+                    return conversation_id
+        return ""
 
     @classmethod
     def _conversation_from_outbound(cls, message: Mapping[str, Any], route: Mapping[str, Any]) -> str:
